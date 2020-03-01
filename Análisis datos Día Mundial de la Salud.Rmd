@@ -1,0 +1,727 @@
+---
+title: "Análisis datos Día Mundial de la Salud"
+author: "Xavier Vivancos García"
+date: "7 de abril de 2018"
+output: 
+  html_document:
+    number_sections: yes
+    toc: yes
+    theme: cerulean
+---
+
+******
+# Lectura de datos
+******
+
+```{r message=FALSE}
+# Cargamos las librerías
+library(streamR)
+library(tidyverse)
+library(scales)
+library(tm)
+library(SnowballC)
+library(wordcloud)
+library(wordcloud2)
+library(tidytext)
+library(reshape2)
+library(gridExtra)
+library(corrplot)
+library(ggmap)
+library(igraph)
+```
+
+```{r}
+# Cargamos el fichero de datos
+json_data <- readTweets("C:/Users/xviva/Desktop/Xavier/Formación/Master/Trabajo final de Máster/Código capturas/TweetsSalud Ready.json", verbose=TRUE)
+```
+
+```{r}
+# Datos en data frame 
+tweets.df <- parseTweets("C:/Users/xviva/Desktop/Xavier/Formación/Master/Trabajo final de Máster/Código capturas/TweetsSalud Ready.json", legacy=TRUE)
+```
+
+
+******
+# Visualizaciones
+******
+
+******
+# Functions 
+******
+
+The first function performs cleaning and preprocessing steps to a corpus:
+
+* `removePunctuation()`. Remove all punctuation marks
+* `stripWhitespace()`. Remove excess whitespace
+* `tolower()`. Make all characters lowercase
+* `removeWords()`. Remove some common stop words
+* `removeNumbers()`. Remove numbers 
+
+```{r}
+# Text transformations
+cleanCorpus <- function(corpus){
+  
+  corpus.tmp <- tm_map(corpus, removePunctuation)
+  corpus.tmp <- tm_map(corpus.tmp, stripWhitespace)
+  corpus.tmp <- tm_map(corpus.tmp, content_transformer(tolower))
+  v_stopwords <- c(stopwords("english"), stopwords("spanish"), stopwords("catalan"),
+                   "thats","weve","hes","theres","ive", "im","will","can","cant",
+                   "dont","youve","us","youre","youll","theyre","whats","didnt","del","dels")
+  corpus.tmp <- tm_map(corpus.tmp, removeWords, v_stopwords)
+  corpus.tmp <- tm_map(corpus.tmp, removeNumbers)
+  return(corpus.tmp)
+  
+}
+```
+
+The second function constructs the term-document matrix, that describes the frequency of terms that occur in a collection of documents. This matrix has terms in the first column and documents across the top as individual column names.
+
+```{r}
+# Most frequent terms 
+frequentTerms <- function(text){
+  
+  s.cor <- Corpus(VectorSource(text))
+  s.cor.cl <- cleanCorpus(s.cor)
+  s.tdm <- TermDocumentMatrix(s.cor.cl)
+  s.tdm <- removeSparseTerms(s.tdm, 0.999)
+  m <- as.matrix(s.tdm)
+  word_freqs <- sort(rowSums(m), decreasing=TRUE)
+  dm <- data.frame(word=names(word_freqs), freq=word_freqs)
+  return(dm)
+  
+}
+```
+
+```{r}
+# Code adapted from Cheng-Jun Wang:
+# http://chengjun.github.io/web_data_analysis/demo2_simulate_networks/
+
+# Write a function to plot the degree distribution
+plot_degree_distribution <- function(graph, mode) {
+  
+  # Calculate degree
+  d <- degree(graph, mode=mode)
+  dd <- degree.distribution(graph, mode=mode, cumulative=FALSE)
+  degree <- 1:max(d)
+  probability <- dd[-1]
+  # Delete blank values
+  nonzero.position <- which(probability!=0)
+  probability <- probability[nonzero.position]
+  degree <- degree[nonzero.position]
+  prob.degree <- data.frame(probability, degree)
+  
+  # Plot
+  ggplot(data=prob.degree, aes(x=degree, y=probability)) + 
+    geom_point() +
+    scale_x_continuous(trans='log10') + 
+    scale_y_continuous(trans='log10') +
+    labs(x="Grado (log)", y="Probabilidad (log)")
+  
+}
+```
+
+******
+# Data analysis
+******
+
+******
+## Nº de _tweets_ con cada _hashtag_
+******
+
+```{r}
+# Accedemos al campo que contiene los textos de los tweets capturados 
+text <-  tweets.df$text
+
+# Columna de las frecuencias para cada hashtag
+freq <- numeric()
+freq[1] <- length(grep("#WorldHealthDay", text, ignore.case=TRUE))
+freq[2] <- length(grep("#DiaMundialDeLaSalud", text, ignore.case=TRUE))
+freq[3] <- length(grep("#DiaMundialDeLaSalut", text, ignore.case=TRUE))
+freq[4] <- length(grep("#SalutPerATothom", text, ignore.case=TRUE))
+freq[5] <- length(grep("#HealthForAll", text, ignore.case=TRUE))
+freq[6] <- length(grep("#WHD2018", text, ignore.case=TRUE))
+
+# Columna de los hashtags
+hashtag <- c("#WorldHealthDay", "#DiaMundialDeLaSalud",
+             "#DiaMundialDeLaSalut", "#SalutPerATothom",
+             "#HealthForAll", "#WHD2018")
+
+# Data frame
+freqhash <- data.frame(hashtag, freq)
+
+# Visualización
+ggplot(data=freqhash, aes(x=reorder(hashtag, -freq), y=freq)) +
+  geom_bar(stat="identity", fill="lightcyan", colour="black") +
+  #geom_text(aes(label=freq), position=position_dodge(width=0.9), vjust=-0.25, col="red") +
+  labs(x="Hashtag", y="Nº de tweets") + 
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+```
+
+******
+## Tweets per minute
+******
+
+```{r}
+tweets.df %>%
+  # UCT time in hh:mm format
+  mutate(created_at=substr(created_at, 12, 16)) %>%
+  count(created_at) %>%
+  ggplot(aes(x=as.numeric(as.factor(created_at)), y=n, group=1)) +
+  geom_line(size=1, show.legend=FALSE) +
+  labs(x="Hora (hh:mm)", y="Nº de Tweets") + 
+  scale_x_continuous(breaks=c(1,31,61,91,121,151,181), 
+                     labels=c("15:17","15:47","16:17",
+                              "16:47","17:17","17:47","18:17")) 
+```
+
+******
+## Most frequent languages
+******
+
+```{r}
+# Most frequent languages
+tweets.df %>%
+  count(lang) %>%
+  arrange(desc(n)) %>%
+  head(n=10) %>%
+  ggplot(aes(x=reorder(lang, -n), y=n)) +
+  geom_bar(stat="identity", fill="lightcyan", colour="black") +
+  labs(x="Idioma", y="Frecuencia") + 
+  theme(axis.text.x=element_text(angle=45, hjust=1)) +
+  scale_x_discrete(labels=c("Inglés","Español","Hindi","Desconocido","Francés",
+                            "Arábico","Catalán","Indonesio","Portugués","Italiano"))
+```
+
+******
+## Characters and words
+******
+
+```{r warning=FALSE}
+# Histogram
+tweets.df %>%
+  filter(lang=="Inglés" | lang=="Español" | lang=="Catalán") %>%
+  ggplot(aes(x=nchar(text), fill=lang)) +
+  geom_histogram(bins=10, show.legend=FALSE) +
+  facet_wrap(~lang) +
+  labs(x="Caracteres", y="Frecuencia") 
+
+# Density plot
+tweets.df %>%
+  filter(lang=="Inglés" | lang=="Español" | lang=="Catalán") %>%
+  ggplot(aes(x=nchar(text), fill=lang)) +
+  geom_density(alpha=0.5) +
+  xlim(c(120, 150)) +
+  labs(x="Caracteres", y="Densidad") +
+  guides(fill=guide_legend(title="Idioma"))
+
+# Boxplot
+tweets.df %>%
+  filter(lang=="Inglés" | lang=="Español" | lang=="Catalán") %>%
+  ggplot(aes(x=lang, y=nchar(text), fill=lang)) +
+  geom_boxplot(show.legend=FALSE) +
+  ylim(c(120, 150)) +
+  labs(x="Idioma") +
+  theme(axis.title.y=element_blank())
+```
+
+```{r warning=FALSE}
+# Histogram
+tweets.df %>%
+  mutate(words_per_tweet=sapply(strsplit(text, " "), length)) %>%
+  filter(lang=="Inglés" | lang=="Español" | lang=="Catalán") %>%
+  ggplot(aes(x=words_per_tweet, fill=lang)) +
+  geom_histogram(bins=10, show.legend=FALSE) +
+  xlim(c(0,40)) +
+  facet_wrap(~lang) +
+  labs(x="Palabras", y="Frecuencia")
+
+# Density plot
+tweets.df %>%
+  mutate(words_per_tweet=sapply(strsplit(text, " "), length)) %>%
+  filter(lang=="Inglés" | lang=="Español" | lang=="Catalán") %>%
+  ggplot(aes(x=words_per_tweet, fill=lang)) +
+  geom_density(alpha=0.5) +
+  xlim(c(0,40)) +
+  labs(x="Palabras", y="Densidad") +
+  guides(fill=guide_legend(title="Idioma")) 
+
+# Boxplot
+tweets.df %>%
+  mutate(words_per_tweet= sapply(strsplit(text, " "), length)) %>%
+  filter(lang=="Inglés" | lang=="Español" | lang=="Catalán") %>%
+  ggplot(aes(x=lang, y=words_per_tweet, fill=lang)) +
+  geom_boxplot(show.legend=FALSE) +
+  labs(x="Idioma") +
+  theme(axis.title.y=element_blank())
+```
+
+******
+## User attributes
+******
+
+In this section we are going to analize some 
+
+```{r warning=FALSE}
+tweets.df %>%
+  # User attributes
+  select(friends_count, followers_count,
+         favourites_count, statuses_count) %>%
+  # Variables as values of a new column (facet_wrap)
+  gather(Attribute, Num, 1:4) %>%
+  mutate_at(vars(Attribute), factor) %>%
+  ggplot(aes(x=Num, fill=Attribute)) +
+  geom_histogram(bins=20, show.legend=FALSE) +
+  xlim(c(0,2000)) +
+  facet_wrap(~Attribute) +
+  labs(y="Frecuencia") +
+  theme(axis.title.x=element_blank())
+```
+
+resultados explicar 
+
+```{r warning=FALSE}
+# Correlation between number of followers and number of friends
+ggplot(data=tweets.df, aes(x=followers_count, y=friends_count)) +
+  geom_point(alpha=0.1) + 
+  xlim(0, quantile(tweets.df$followers_count, 0.95)) +
+  ylim(0, quantile(tweets.df$friends_count, 0.95)) + 
+  geom_smooth(method="lm", color="red") +
+  labs(x="Número de seguidores", y="Número de amigos") 
+
+# Correlation between number of favourites and number of Tweets
+ggplot(data=tweets.df, aes(x=favourites_count, y=statuses_count)) +
+  geom_point(alpha=0.1) + 
+  xlim(0, quantile(tweets.df$favourites_count, 0.95)) +
+  ylim(0, quantile(tweets.df$statuses_count, 0.95)) + 
+  geom_smooth(method="lm", color="red") +
+  labs(x="Número de favoritos", y="Número de tweets") 
+```
+
+```{r}
+# Years when the user accounts were created
+tweets.df %>%
+  mutate(user_created_at=substr(user_created_at, 27, 30)) %>%
+  count(user_created_at) %>%
+  ggplot(aes(x=user_created_at, y=n, group=1)) +
+  geom_bar(stat="identity", fill="thistle2", colour="black") +
+  labs(x="Year", y="Frequency") 
+```
+
+
+```{r}
+# Wordcloud 
+dm <- frequentTerms(iconv(tweets.df$description, from="UTF-8", to="ASCII"))
+wordcloud2(dm, minRotation=-pi/6, maxRotation=-pi/6, rotateRatio=1)
+
+ggplot(dm %>% arrange(desc(freq)) %>% head(n=20),
+       aes(x=reorder(word, -freq), y=freq)) +
+  geom_bar(stat="identity", fill="salmon", colour="black") +
+  labs(y="Frecuencia") +
+  theme(axis.text.x=element_text(angle=45, hjust=1),
+        axis.title.x=element_blank()) 
+```
+
+******
+## Most frequent words
+******
+
+```{r warning=FALSE}
+# English Tweets
+en_tweets <- tweets.df %>%
+  filter(lang=="Inglés")
+
+# Wordcloud
+dm <- frequentTerms(iconv(en_tweets$text, from="UTF-8", to="ASCII//TRANSLIT"))
+dm2 <- dm[dm$freq>=50,]
+wordcloud2(dm2, minRotation=-pi/6, maxRotation=-pi/6, rotateRatio=1)
+
+# Top 20 frequent words in English 
+ggplot(dm2 %>% arrange(desc(freq)) %>% head(n=20),
+       aes(x=reorder(word, -freq), y=freq)) +
+  geom_bar(stat="identity", fill="salmon", colour="black") +
+  labs(y="Frecuencia") +
+  theme(axis.text.x=element_text(angle=45, hjust=1),
+        axis.title.x=element_blank()) 
+```
+
+```{r warning=FALSE}
+# Spanish Tweets
+es_tweets <- tweets.df %>%
+  filter(lang=="Español")
+
+# Wordcloud
+dm <- frequentTerms(iconv(es_tweets$text, from="UTF-8", to="ASCII//TRANSLIT"))
+dm2 <- dm[dm$freq>=20,]
+wordcloud2(dm2, minRotation=-pi/6, maxRotation=-pi/6, rotateRatio=1)
+
+# Top 20 frequent words in Spanish 
+ggplot(dm2 %>% arrange(desc(freq)) %>% head(n=20),
+       aes(x=reorder(word, -freq), y=freq)) +
+  geom_bar(stat="identity", fill="salmon", colour="black") +
+  labs(y="Frecuencia") +
+  theme(axis.text.x=element_text(angle=45, hjust=1),
+        axis.title.x=element_blank()) 
+```
+
+```{r}
+# Catalan Tweets
+cat_tweets <- tweets.df %>%
+  filter(lang=="Catalán")
+
+# Wordcloud
+dm <- frequentTerms(iconv(cat_tweets$text, from="UTF-8", to="ASCII//TRANSLIT"))
+wordcloud2(dm, minRotation=-pi/6, maxRotation=-pi/6, rotateRatio=1)
+
+# Top 20 frequent words in Catalan 
+ggplot(dm %>% arrange(desc(freq)) %>% head(n=20),
+       aes(x=reorder(word, -freq), y=freq)) +
+  geom_bar(stat="identity", fill="salmon", colour="black") +
+  labs(y="Frecuencia") +
+  theme(axis.text.x=element_text(angle=45, hjust=1),
+        axis.title.x=element_blank()) 
+```
+
+******
+## Sentiment analysis
+******
+
+******
+### `bing` lexicon
+******
+
+```{r}
+# Tokens
+tokens <- tweets.df %>%  
+  unnest_tokens(word, text) %>%
+  select(word)
+```
+
+```{r warning=FALSE}
+# Positive and negative words 
+tokens %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort=TRUE) %>%
+  acast(word ~ sentiment, value.var="n", fill=0) %>%
+  comparison.cloud(colors=c("#F8766D", "#00BFC4"), max.words=200)
+```
+
+******
+### `nrc` lexicon
+******
+
+```{r message=FALSE}
+# Sentiments and frequency associated with each word  
+sentiments <- tokens %>% 
+  inner_join(get_sentiments("nrc")) %>%
+  count(word, sentiment, sort=TRUE) 
+
+# Frequency of each sentiment
+ggplot(data=sentiments, aes(x=reorder(sentiment, n, sum), y=n)) + 
+geom_bar(stat="identity", aes(fill=sentiment), show.legend=FALSE) +
+labs(x="Sentiment", y="Frequency") +
+  coord_flip()
+```
+
+```{r}
+# Top 10 frequent terms for each sentiment
+sentiments %>%
+  group_by(sentiment) %>%
+  arrange(desc(n)) %>%
+  slice(1:10) %>%
+  ggplot(aes(x=reorder(word, n), y=n)) +
+  geom_col(aes(fill=sentiment), show.legend=FALSE) +
+  theme(axis.text.x=element_text(angle=45, hjust=1)) +
+  facet_wrap(~sentiment, scales="free_y") +
+  labs(y="Frequency", x="Words") +
+  coord_flip() 
+```
+
+
+```{r message=FALSE}
+# Sentiment analysis over time 
+tweets.df %>%  
+  unnest_tokens(word, text) %>%
+  select(word, created_at) %>%
+  inner_join(get_sentiments("nrc")) %>%
+  mutate(created_at=substr(created_at, 12, 16)) %>%
+  count(created_at, sentiment) %>%
+  ggplot(aes(x=as.numeric(as.factor(created_at)), y=as.factor(sentiment))) +
+  geom_tile(aes(fill=n), show.legend=FALSE) +
+  labs(x="UCT time (hh:mm)", y="Sentiment") +   
+  scale_fill_gradient(low="white", high="red") +
+  scale_x_continuous(breaks=c(1,31,61,91,121,151,181), 
+                     labels=c("15:17","15:47","16:17",
+                              "16:47","17:17","17:47","18:17")) +
+  labs(fill="Frequency")
+```
+
+******
+### `AFINN` lexicon
+******
+```{r}
+# Positive and negative words 
+top_positive <- tokens %>% 
+  inner_join(get_sentiments("afinn")) %>%
+  count(word, score, sort=TRUE) %>%
+  arrange(desc(score)) %>%
+  head(n=10) %>%
+  ggplot(aes(x=reorder(word, score), y=score)) +
+  geom_bar(stat="identity", fill="#00BFC4", colour="black") +
+  labs(x="Positive words", y="Score") +
+  coord_flip() 
+
+top_negative <- tokens %>% 
+  inner_join(get_sentiments("afinn")) %>%
+  count(word, score, sort=TRUE) %>%
+  arrange(score) %>%
+  head(n=10) %>%
+  ggplot(aes(x=reorder(word, -score), y=score)) +
+  geom_bar(stat="identity", fill="#F8766D", colour="black") +
+  labs(x="Negative words", y="Score") +
+  coord_flip() 
+
+grid.arrange(top.positive, top.negative,
+             layout_matrix=cbind(1,2))
+```
+
+```{r}
+# Contribution
+tokens %>% 
+  inner_join(get_sentiments("afinn")) %>%
+  count(word, score, sort=TRUE) %>%
+  mutate(contribution=n*score) %>%
+  arrange(desc(abs(contribution))) %>%
+  head(20) %>%
+  ggplot(aes(x=reorder(word, contribution), y=contribution, fill=n*score>0)) +
+  geom_col(show.legend = FALSE) +
+  xlab("Words") +
+  ylab("Sentiment score * Number of ocurrences") +
+  coord_flip()
+```
+
+******
+# Geographic information
+******
+
+```{r}
+# Time zone
+tweets.df %>%
+  count(time_zone) %>%
+  arrange(desc(n)) %>%
+  head(n=20) %>%
+  na.omit() %>%
+  ggplot(aes(x=reorder(time_zone, -n), y=n)) +
+  geom_bar(stat="identity", fill="darkseagreen1", colour="black") +
+  theme(axis.text.x=element_text(angle=45, hjust=1, size=7)) +
+  labs(x="Time zone", y="Frequency")
+```
+
+
+```{r}
+# User-defined location
+#locations <- iconv(unique(na.omit(tweets.df$location)), to="UTF-8")
+
+# Geolocalization
+# points1 <- geocode(locations[1:2500]) HECHO
+#points2 <- geocode(locations[2501:5000])
+#points3 <- geocode(locations[5001:7500])
+#points4 <- geocode(locations[7501:9424])
+#points5 <- geocode(locations[10001:12500])
+#points6 <- geocode(locations[12501:15000])
+#points7 <- geocode(locations[15001:17500])
+#points8 <- geocode(locations[17501:20000])
+#points9 <- geocode(locations[20001:22500])
+#points10 <- geocode(locations[22501:25000])
+#points11 <- geocode(locations[25001:27500])
+#points12 <- geocode(locations[27501:30000])
+
+#points <- rbind(points1, points2, points3, points4)
+#points <- rbind(points1, points2, points3, points4, points5, 
+#                points6, points7, points8, points9, points10,
+#                points11, points12)
+#write.csv(points, file="C:/Users/xviva/Desktop/Xavier/Formaci?n/Master/Trabajo final de M?ster/C?digo capturas/locations.csv", fileEncoding="UTF-8")
+locations <- read.csv("C:/Users/xviva/Desktop/Xavier/Formación/Master/Trabajo final de Máster/Código capturas/locations.csv") 
+
+
+lon <- locations$lon
+lat <- locations$lat
+
+# World map 
+mp <- NULL
+mapWorld <- borders("world", colour="gray50", fill="gray50")
+mp <- ggplot() + mapWorld
+
+# Points on the map
+mp <- mp+ geom_point(aes(x=lon, y=lat), color="red",size=1)
+
+# Display the map 
+mp
+```
+
+```{r}
+#library(leaflet)
+# Interactive map
+#leaflet(data=points) %>%
+#  addTiles() %>%
+#  addCircles(lat=points$lat, lng=points$lon)
+```
+
+
+******
+# Network analysis
+******
+
+******
+# All Tweets 
+******
+
+```{r}
+# Extract Tweet ids and retweeted_status ids
+ids <- sapply(json_data, function(x) x$id_str)
+ret_ids <- sapply(json_data, function(x) if(is.null(x$retweeted_status)) NA else x$retweeted_status$id_str)
+df <- data.frame(ids, ret_ids)
+
+# Create nodes and edges dataframes
+nodes <- unique(append(ids, na.omit(ret_ids)))
+edges <- unique(na.omit(df))
+
+# Create the graph
+g <- graph.data.frame(edges, directed=T, vertices=nodes)
+
+# Write the graph in graphml format
+graphml_file <- "tweetsHealth.graphml"
+write.graph(g, file=graphml_file, format="graphml")
+```
+
+```{r}
+# Network overview 
+
+# Mumber of nodes and edges
+show(paste("Number of nodes:", vcount(g))) 
+show(paste("Number of edges:", ecount(g)))
+
+show(paste("Edge density:", edge_density(g)))
+show(paste("Reciprocity:", reciprocity(g)))
+show(paste("Transitivity:", transitivity(g)))
+
+# Path length
+show(paste("Diameter (directed):", diameter(g, directed=T)))
+show(paste("Diameter (undirected):", diameter(g, directed=F)))
+show(paste("Avg. path length (directed):", average.path.length(g, directed=T)))
+show(paste("Avg. path length (undirected):", average.path.length(g, directed=F)))
+
+# Plot the degree distribution
+plot_degree_distribution(g, mode="in")
+```
+
+
+```{r}
+# Most relevant nodes
+top_nodes <- sort(degree(g, mode="in"), decreasing=TRUE)[1:5]
+
+# Most relevant users and their Tweets
+rt_sc_name <- sapply(json_data, function(x) if(is.null(x$retweeted_status)) NA else x$retweeted_status$user$screen_name)
+rt_text <- sapply(json_data, function(x) if(is.null(x$retweeted_status)) NA else x$retweeted_status$text)
+
+rt_sc_name[match(names(top_nodes), ret_ids)]
+rt_text[match(names(top_nodes), ret_ids)]
+```
+
+******
+# Spanish Tweets 
+******
+
+```{r}
+lang <- sapply(json_data, function(x) x$lang)
+df <- data.frame(ids, ret_ids, lang, rt_sc_name, rt_text)
+
+es_network <- df %>%
+  filter(lang=="es") %>%
+  select(ids, ret_ids) %>%
+  mutate_at(vars(ids, ret_ids), as.character)
+
+# Create nodes and edges dataframes
+nodes <- unique(append(es_network$ids, na.omit(es_network$ret_ids)))
+edges <- unique(na.omit(es_network))
+
+# create the graph
+g <- graph.data.frame(edges, directed=T, vertices=nodes)
+
+graphml_file <- "tweetsHealthSpanish.graphml"
+write.graph(g, file=graphml_file, format="graphml")
+
+# Most relevant nodes
+top_nodes <- sort(degree(g, mode="in"), decreasing=TRUE)[1:5]
+
+# Most relevant users and their Tweets
+rt_sc_name[match(names(top_nodes), ret_ids)]
+rt_text[match(names(top_nodes), ret_ids)]
+```
+
+******
+# Catalan Tweets 
+******
+
+```{r}
+
+ca_network <- df %>%
+  filter(lang=="ca") %>%
+  select(ids, ret_ids) %>%
+  mutate_at(vars(ids, ret_ids), as.character)
+
+# Create nodes and edges dataframes
+nodes <- unique(append(ca_network$ids, na.omit(ca_network$ret_ids)))
+edges <- unique(na.omit(ca_network))
+
+# create the graph
+g <- graph.data.frame(edges, directed=T, vertices=nodes)
+
+glay = layout.fruchterman.reingold(g) 
+plot(g)
+```
+
+```{r}
+glay = layout.fruchterman.reingold(g)
+par(bg="gray15", mar=c(1,1,1,1))
+plot(g, layout=glay,
+     vertex.color="gray25",
+     vertex.size=(degree(g, mode = "in")), #sized by in-degree centrality
+     vertex.label = NA,
+     edge.arrow.size=0.8,
+     edge.arrow.width=0.5,
+     edge.width=edge_attr(g)$n/10, #sized by edge weight
+     edge.color=hsv(h=.95, s=1, v=.7, alpha=0.5))
+title("Retweet Network", cex.main=1, col.main="gray95")
+```
+
+```{r}
+library(networkD3)
+library(visNetwork)
+
+
+wc <- cluster_walktrap(g)
+members <- membership(wc)
+d3_rt <- igraph_to_networkD3(g, group = members)
+
+forceNetwork(Links = d3_rt$links, Nodes = d3_rt$nodes, 
+             Source = 'source', Target = 'target', 
+             NodeID = 'name', Group = 'group')
+
+visNetwork(nodes, edges)
+
+```
+
+
+
+
+
+```{r}
+# Most relevant nodes
+top_nodes <- sort(degree(g, mode="in"), decreasing=TRUE)[1:5]
+
+# Most relevant users and their Tweets
+rt_sc_name[match(names(top_nodes), ret_ids)]
+rt_text[match(names(top_nodes), ret_ids)]
+```
+```
+
