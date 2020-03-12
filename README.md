@@ -1,5 +1,10 @@
 # Master's degree final project
 
+<!-- badges: start -->
+[![contributions welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/dwyl/esta/issues)
+[![HitCount](http://hits.dwyl.com/xavivg91/master-degree-final-project.svg)](http://hits.dwyl.com/xavivg91/master-degree-final-project)
+<!-- badges: end -->
+
 My delivery for the final project of the Master's degree in Business Intelligence and Big Data ([Universitat Oberta de Catalunya](https://www.uoc.edu/portal/en/index.html)).
 
 The principal objective of the project is to analyze tweets captured on World Health Day (April 7th) to create a data storytelling, using Twitter as the main source. The project includes the following analysis:
