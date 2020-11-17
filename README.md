@@ -1,4 +1,4 @@
-# Master's degree final project <img src='uoc-logo.png' align="right" height="60" /></a>
+# Master's degree final project <img src='uoc-logo.png' align="right" height="50" /></a>
 
 <!-- badges: start -->
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
